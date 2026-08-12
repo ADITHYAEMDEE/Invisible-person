@@ -5,7 +5,6 @@ import pygame
 from collections import deque
 import os
 
-# Setup MediaPipe Tasks API modules
 BaseOptions = mp.tasks.BaseOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
@@ -17,9 +16,7 @@ ImageSegmenterOptions = mp.tasks.vision.ImageSegmenterOptions
 
 
 def is_hand_open(detection_result):
-    """
-    Checks if fingers are extended relative to knuckle joints.
-    """
+
     if not detection_result.hand_landmarks:
         return False
 
@@ -37,14 +34,7 @@ def is_hand_open(detection_result):
 
 
 def get_person_bbox(mask, frame_shape, threshold=0.5, padding=25):
-    """
-    Turns a per-pixel confidence mask into a single padded bounding box
-    around the person, so we can cut out a rectangle instead of blending
-    a soft alpha mask over the whole frame.
-    """
-    # Some MediaPipe builds return the mask with an extra trailing
-    # channel dimension, e.g. (H, W, 1) instead of (H, W) - squeeze it
-    # down so np.where gives us exactly (row_indices, col_indices)
+
     mask = np.squeeze(mask)
 
     ys, xs = np.where(mask > threshold)
@@ -64,12 +54,6 @@ def get_person_bbox(mask, frame_shape, threshold=0.5, padding=25):
 
 
 def smooth_bbox(bbox_history):
-    """
-    Unions the last few frames' bounding boxes together. If the hand moves
-    fast enough that one frame's detection lags behind, the box from a
-    frame or two ago still covers that area, so the cutout keeps up
-    instead of clipping the hand.
-    """
     if not bbox_history:
         return None
 
@@ -82,14 +66,6 @@ def smooth_bbox(bbox_history):
 
 
 def composite_bbox_region(frame, background, bbox, feather=15):
-    """
-    Pastes the background over the bbox region, but feathers just the
-    edges of that rectangle (a thin soft-blend border) instead of a hard
-    cut. This doesn't turn it into a full-body mask blend - it's still
-    a box - it just softens the seam so small lighting/exposure
-    differences between the live frame and the captured background
-    aren't as visible as a sharp line.
-    """
     x1, y1, x2, y2 = bbox
     h, w = frame.shape[:2]
 
@@ -115,10 +91,6 @@ def composite_bbox_region(frame, background, bbox, feather=15):
 
 
 def draw_minimal_text(frame, text, color=(230, 230, 230)):
-    """
-    Small, centered, single-line status text - top middle instead of a
-    boxed/bold top-left label.
-    """
     font = cv2.FONT_HERSHEY_SIMPLEX
     scale = 0.55
     thickness = 1
@@ -135,30 +107,17 @@ def main():
     background = None
     state_buffer = deque(maxlen=5)
 
-    # Debounced "is the hand currently open" state
     current_state_open = False
-    # The previous frame's debounced state, used to catch the moment
-    # the gesture transitions closed -> open (the toggle trigger)
     previous_state_open = False
-
-    # This is the actual visibility state of the person, and it only
-    # flips on a closed->open transition. It does NOT track the hand
-    # continuously, which is what makes it a toggle instead of hold.
     is_invisible = False
-
-    # Rolling window of recent bboxes, unioned together in smooth_bbox()
-    # to give the cutout a bit of a buffer against fast hand motion
     bbox_history = deque(maxlen=5)
 
-    # Audio: dis.mp3 loops while invisible, app.mp3 plays once on reappear.
-    # Separate channels so starting one never interrupts the other.
     pygame.mixer.init()
     disappear_sound = pygame.mixer.Sound("dis.wav")
     appear_sound = pygame.mixer.Sound("app.wav")
     disappear_channel = pygame.mixer.Channel(0)
     appear_channel = pygame.mixer.Channel(1)
 
-    # Purple outline color, in OpenCV's BGR order
     OUTLINE_COLOR = (200, 40, 160)
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -189,12 +148,8 @@ def main():
 
             frame = cv2.flip(frame, 1)
 
-            # Capture background state
             if background is None:
-                # Draw instructions on a separate display copy - frame
-                # itself must stay clean, since that's what gets saved
-                # as the background on 'b' (previously the red text was
-                # getting burned permanently into the captured background)
+
                 display = frame.copy()
                 cv2.putText(display, "Step out of frame and press 'b' to capture background",
                             (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
@@ -213,14 +168,11 @@ def main():
 
             hand_result = landmarker.detect(mp_image)
 
-            # Raw open/closed reading for this frame
             raw_hand_open = is_hand_open(hand_result) if hand_result.hand_landmarks else current_state_open
 
-            # Debounce to avoid flicker on borderline frames
             state_buffer.append(raw_hand_open)
             current_state_open = sum(state_buffer) > len(state_buffer) // 2
 
-            # Toggle only on the rising edge: closed -> open
             if current_state_open and not previous_state_open:
                 is_invisible = not is_invisible
 
@@ -234,8 +186,6 @@ def main():
             previous_state_open = current_state_open
 
             if is_invisible:
-                # Only run segmentation when we actually need the cutout,
-                # saves a bit of compute while visible
                 seg_result = segmenter.segment(mp_image)
                 confidence_masks = seg_result.confidence_masks
 
@@ -256,11 +206,8 @@ def main():
 
                 draw_minimal_text(output, "invisible")
             else:
-                # Clear the trailing bbox history so the next time you
-                # vanish, it doesn't start with stale boxes from before
                 bbox_history.clear()
 
-                # Plain, untouched webcam frame - no mask, no blending
                 output = frame.copy()
                 draw_minimal_text(output, "visible")
 
