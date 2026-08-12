@@ -1,7 +1,9 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import pygame
 from collections import deque
+import os
 
 # Setup MediaPipe Tasks API modules
 BaseOptions = mp.tasks.BaseOptions
@@ -112,6 +114,22 @@ def composite_bbox_region(frame, background, bbox, feather=15):
     return output
 
 
+def draw_minimal_text(frame, text, color=(230, 230, 230)):
+    """
+    Small, centered, single-line status text - top middle instead of a
+    boxed/bold top-left label.
+    """
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.55
+    thickness = 1
+
+    (text_w, _), _ = cv2.getTextSize(text, font, scale, thickness)
+    x = (frame.shape[1] - text_w) // 2
+    y = 28
+
+    cv2.putText(frame, text, (x, y), font, scale, color, thickness, cv2.LINE_AA)
+
+
 def main():
     cap = cv2.VideoCapture(0)
     background = None
@@ -132,14 +150,27 @@ def main():
     # to give the cutout a bit of a buffer against fast hand motion
     bbox_history = deque(maxlen=5)
 
+    # Audio: dis.mp3 loops while invisible, app.mp3 plays once on reappear.
+    # Separate channels so starting one never interrupts the other.
+    pygame.mixer.init()
+    disappear_sound = pygame.mixer.Sound("dis.wav")
+    appear_sound = pygame.mixer.Sound("app.wav")
+    disappear_channel = pygame.mixer.Channel(0)
+    appear_channel = pygame.mixer.Channel(1)
+
+    # Purple outline color, in OpenCV's BGR order
+    OUTLINE_COLOR = (200, 40, 160)
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
     hand_options = HandLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path="hand_landmarker.task"),
+        base_options=BaseOptions(model_asset_path=os.path.join(current_dir, "hand_landmarker.task")),
         running_mode=VisionRunningMode.IMAGE,
         num_hands=1
     )
 
     seg_options = ImageSegmenterOptions(
-        base_options=BaseOptions(model_asset_path="selfie_segmenter.tflite"),
+        base_options=BaseOptions(model_asset_path=os.path.join(current_dir, "selfie_segmenter.tflite")),
         running_mode=VisionRunningMode.IMAGE,
         output_confidence_masks=True
     )
@@ -193,6 +224,13 @@ def main():
             if current_state_open and not previous_state_open:
                 is_invisible = not is_invisible
 
+                if is_invisible:
+                    appear_channel.stop()
+                    disappear_channel.play(disappear_sound, loops=-1)
+                else:
+                    disappear_channel.stop()
+                    appear_channel.play(appear_sound)
+
             previous_state_open = current_state_open
 
             if is_invisible:
@@ -213,9 +251,10 @@ def main():
                 smoothed = smooth_bbox(bbox_history)
                 if smoothed:
                     output = composite_bbox_region(frame, background, smoothed)
+                    x1, y1, x2, y2 = smoothed
+                    cv2.rectangle(output, (x1, y1), (x2, y2), OUTLINE_COLOR, 1)
 
-                cv2.putText(output, "Invisible (toggle open)", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                draw_minimal_text(output, "invisible")
             else:
                 # Clear the trailing bbox history so the next time you
                 # vanish, it doesn't start with stale boxes from before
@@ -223,14 +262,15 @@ def main():
 
                 # Plain, untouched webcam frame - no mask, no blending
                 output = frame.copy()
-                cv2.putText(output, "Visible (toggle open to vanish)", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+                draw_minimal_text(output, "visible")
 
             cv2.imshow("Magic Vanish", output)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+    disappear_channel.stop()
+    appear_channel.stop()
     cap.release()
     cv2.destroyAllWindows()
 
