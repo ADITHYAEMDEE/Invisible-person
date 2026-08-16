@@ -1,4 +1,4 @@
-# Invisible person
+# Invisible person!
 
 A webcam trick that makes you disappear when you open your hand, using hand tracking and person segmentation with the help of OpenCV and mediapipe.
 
